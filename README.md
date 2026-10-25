@@ -61,6 +61,11 @@ python -m compileall -q app.py api.py core
 
 Tests use fixtures and do not require a live API key.
 
+The API exposes JSON and Markdown reports for individual investigations at
+`/api/investigations/{id}/report.json` and
+`/api/investigations/{id}/report.md`. CSV export is available at
+`/api/reports/csv`.
+
 ## Scope and limitations
 
 - Local educational prototype; no authentication or multi-user isolation.

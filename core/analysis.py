@@ -66,32 +66,97 @@ def analyze_url(value: str) -> dict:
             ascii_host = hostname.encode("idna").decode("ascii").lower()
         except UnicodeError as exc:
             raise URLAnalysisError("Hostname cannot be normalized with IDNA.") from exc
-        if len(ascii_host) > 253 or any(not label or len(label) > 63 for label in ascii_host.split(".")):
+        if len(ascii_host) > 253 or any(
+            not label or len(label) > 63 for label in ascii_host.split(".")
+        ):
             raise URLAnalysisError("Hostname labels have invalid lengths.")
-        if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) for label in ascii_host.split(".")):
+        if any(
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+            for label in ascii_host.split(".")
+        ):
             raise URLAnalysisError("Hostname contains invalid characters.")
         hostname = ascii_host
 
-    display_host = f"[{hostname}]" if ":" in hostname else hostname
+    # For display in netloc, always bracket IP literals in the normalized URL
+    display_host = f"[{hostname}]" if ip_literal else hostname
     netloc = display_host
-    if port is not None and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+    if port is not None and not (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
         netloc = f"{display_host}:{port}"
-    path = parts.path or "/"
+
+    # Normalize path: remove dot segments and resolve double dots
+    # Preserve trailing slash if present in original
+    trailing_slash = parts.path.endswith("/") if parts.path else False
+    if parts.path:
+        path_parts = []
+        for segment in parts.path.split("/"):
+            if segment == "..":
+                if path_parts:
+                    path_parts.pop()
+            elif segment and segment != ".":
+                path_parts.append(segment)
+        path = "/" + "/".join(path_parts) if path_parts else "/"
+        if trailing_slash and not path.endswith("/"):
+            path += "/"
+    else:
+        path = "/"
+
     normalized = urlunsplit((scheme, netloc, path, parts.query, parts.fragment))
     subdomain_depth = 0 if ip_literal else max(0, len(hostname.split(".")) - 2)
     signals: list[Signal] = []
     if ip_literal:
-        signals.append(Signal("ip_literal_host", "The URL uses an IP address instead of a domain name.", hostname, "medium"))
-    if port is not None and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
-        signals.append(Signal("nonstandard_port", "The URL uses a non-default HTTP(S) port.", str(port), "low"))
+        signals.append(
+            Signal(
+                "ip_literal_host",
+                "The URL uses an IP address instead of a domain name.",
+                hostname,
+                "medium",
+            )
+        )
+    if port is not None and not (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
+        signals.append(
+            Signal("nonstandard_port", "The URL uses a non-default HTTP(S) port.", str(port), "low")
+        )
     if has_credentials:
-        signals.append(Signal("embedded_credentials", "The URL authority contains user information.", "Username/password component present (value omitted).", "high"))
+        signals.append(
+            Signal(
+                "embedded_credentials",
+                "The URL authority contains user information.",
+                "Username/password component present (value omitted).",
+                "high",
+            )
+        )
     if hostname.startswith("xn--") or ".xn--" in hostname:
-        signals.append(Signal("punycode_hostname", "The hostname contains an IDNA punycode label.", hostname, "medium"))
+        signals.append(
+            Signal(
+                "punycode_hostname",
+                "The hostname contains an IDNA punycode label.",
+                hostname,
+                "medium",
+            )
+        )
     if subdomain_depth >= 4:
-        signals.append(Signal("deep_subdomain", "The hostname contains multiple subdomain levels.", f"{subdomain_depth} label(s) before the final two labels; not a public-suffix calculation.", "low"))
+        signals.append(
+            Signal(
+                "deep_subdomain",
+                "The hostname contains multiple subdomain levels.",
+                f"{subdomain_depth} label(s) before the final two labels; "
+                "not a public-suffix calculation.",
+                "low",
+            )
+        )
     if re.search(r"%(?:[0-9a-fA-F]{2})", parts.path + parts.query):
-        signals.append(Signal("percent_encoded_content", "The path or query contains percent-encoded bytes.", "Percent encoding found; it is common in benign URLs too.", "info"))
+        signals.append(
+            Signal(
+                "percent_encoded_content",
+                "The path or query contains percent-encoded bytes.",
+                "Percent encoding found; it is common in benign URLs too.",
+                "info",
+            )
+        )
 
     query_names = sorted({key for key, _ in parse_qsl(parts.query, keep_blank_values=True)})
     return {
@@ -105,5 +170,8 @@ def analyze_url(value: str) -> dict:
         "path": path,
         "query_parameter_names": query_names,
         "signals": [signal.to_dict() for signal in signals],
-        "note": "Signals are heuristics, not proof of maliciousness. The URL was not visited or resolved.",
+        "note": (
+            "Signals are heuristics, not proof of maliciousness. "
+            "The URL was not visited or resolved."
+        ),
     }
